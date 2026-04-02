@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import type { AuthChangeEvent } from "@supabase/supabase-js";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
@@ -46,7 +47,7 @@ export default function LoginPage() {
         .single();
 
       if (userError || !userData) {
-        toast("Unable to determine user role. Please contact support.", "error");
+        toast(userError?.message ?? "No profile found for this user.", "error");
         return;
       }
 
@@ -56,7 +57,18 @@ export default function LoginPage() {
         return;
       }
 
-      router.push(redirectPath);
+      // Wait for onAuthStateChange to fire and write the session cookie
+      await new Promise<void>((resolve) => {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event: string) => {
+          if (event === "SIGNED_IN") {
+            subscription.unsubscribe();
+            resolve();
+          }
+        });
+        setTimeout(resolve, 1500);
+      });
+
+      window.location.href = redirectPath;
     } catch {
       toast("An unexpected error occurred. Please try again.", "error");
     } finally {
@@ -109,13 +121,24 @@ export default function LoginPage() {
           </Button>
         </form>
 
-        <div className="mt-4 text-center">
-          <Link
-            href="/forgot-password"
-            className="text-sm font-medium text-[#276EF1] hover:underline"
-          >
-            Forgot Password?
-          </Link>
+        <div className="mt-4 space-y-2 text-center">
+          <div>
+            <Link
+              href="/forgot-password"
+              className="text-sm font-medium text-[#276EF1] hover:underline"
+            >
+              Forgot Password?
+            </Link>
+          </div>
+          <div>
+            <span className="text-sm text-gray-500">Don&apos;t have an account? </span>
+            <Link
+              href="/signup"
+              className="text-sm font-medium text-[#276EF1] hover:underline"
+            >
+              Create one
+            </Link>
+          </div>
         </div>
       </div>
     </div>

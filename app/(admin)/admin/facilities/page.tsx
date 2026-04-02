@@ -92,7 +92,7 @@ export default function FacilitiesPage() {
       }
 
       const enriched: FacilityWithCounts[] = await Promise.all(
-        orgs.map(async (org) => {
+        orgs.map(async (org: typeof orgs[number]) => {
           const [staffRes, ridesRes] = await Promise.all([
             supabase
               .from("users")
@@ -130,29 +130,19 @@ export default function FacilitiesPage() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const { error } = await supabase.from("organizations").insert({
-        name: facilityForm.name,
-        address: facilityForm.address || null,
-        phone: facilityForm.phone || null,
-        email: facilityForm.email || null,
-        billing_email: facilityForm.billing_email || null,
-        notes: facilityForm.notes || null,
-        is_active: true,
+      const res = await fetch("/api/facilities", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(facilityForm),
       });
-      if (error) {
-        toast("Failed to add facility: " + error.message, "error");
+      const json = await res.json();
+      if (!res.ok) {
+        toast("Failed to add facility: " + (json.error ?? "Unknown error"), "error");
         return;
       }
       toast("Facility added successfully", "success");
       setFacilityModalOpen(false);
-      setFacilityForm({
-        name: "",
-        address: "",
-        phone: "",
-        email: "",
-        billing_email: "",
-        notes: "",
-      });
+      setFacilityForm({ name: "", address: "", phone: "", email: "", billing_email: "", notes: "" });
       fetchFacilities();
     } catch {
       toast("Failed to add facility", "error");
@@ -180,19 +170,14 @@ export default function FacilitiesPage() {
     if (!editingFacility) return;
     setEditSubmitting(true);
     try {
-      const { error } = await supabase
-        .from("organizations")
-        .update({
-          name: editForm.name,
-          address: editForm.address || null,
-          phone: editForm.phone || null,
-          email: editForm.email || null,
-          billing_email: editForm.billing_email || null,
-          notes: editForm.notes || null,
-        })
-        .eq("id", editingFacility.id);
-      if (error) {
-        toast("Failed to update facility: " + error.message, "error");
+      const res = await fetch("/api/facilities", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: editingFacility.id, ...editForm }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        toast("Failed to update facility: " + (json.error ?? "Unknown error"), "error");
         return;
       }
       toast("Facility updated successfully", "success");
@@ -217,14 +202,13 @@ export default function FacilitiesPage() {
     if (!selectedFacilityId) return;
     setStaffSubmitting(true);
     try {
-      const res = await fetch("/api/drivers", {
+      const res = await fetch("/api/staff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: staffForm.email,
           full_name: staffForm.full_name,
           phone: staffForm.phone || null,
-          role: "facility_staff",
           organization_id: selectedFacilityId,
         }),
       });

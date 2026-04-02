@@ -1,4 +1,5 @@
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { totalBlockedMinutes } from "@/lib/ride-buffers";
 import { calculateDistance } from "@/lib/utils";
 import { buildRideWebhookPayload, sendWebhook } from "@/lib/notifications/gohighlevel-webhook";
 import { matchSharedRide } from "@/lib/shared-ride-matching";
@@ -26,13 +27,17 @@ export async function autoAssignDriver(rideId: string): Promise<{ success: boole
     return { success: true, driverId: sharedResult.driverId };
   }
 
-  // Find available drivers with matching vehicle type
-  const { data: drivers, error: driversError } = await supabase
+  // Find available drivers with matching vehicle type and sufficient capacity
+  const passengerCount = ride.passenger_count ?? 1;
+  let driverQuery = supabase
     .from("drivers")
     .select("*, user:users(*)")
     .eq("status", "available")
     .eq("vehicle_type", ride.vehicle_type_needed)
-    .eq("is_active", true);
+    .eq("is_active", true)
+    .gte("max_passengers", passengerCount);
+
+  const { data: drivers, error: driversError } = await driverQuery;
 
   if (driversError || !drivers || drivers.length === 0) {
     // No driver available — notify admin
@@ -49,10 +54,11 @@ export async function autoAssignDriver(rideId: string): Promise<{ success: boole
     return { success: false, error: "No available drivers" };
   }
 
-  // Filter out drivers with conflicting rides
+  // Filter out drivers with conflicting rides using buffered window
   const scheduledTime = new Date(ride.scheduled_pickup_time);
-  const windowStart = new Date(scheduledTime.getTime() - 60 * 60 * 1000);
-  const windowEnd = new Date(scheduledTime.getTime() + 60 * 60 * 1000);
+  const blockedMins = totalBlockedMinutes(ride.estimated_duration_minutes ?? 60);
+  const windowStart = new Date(scheduledTime.getTime() - blockedMins * 60 * 1000);
+  const windowEnd   = new Date(scheduledTime.getTime() + blockedMins * 60 * 1000);
 
   const { data: conflictingRides } = await supabase
     .from("rides")

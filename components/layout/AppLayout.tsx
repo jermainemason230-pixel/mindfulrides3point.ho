@@ -23,27 +23,31 @@ function LoadingSkeleton() {
 }
 
 export function AppLayout({ children }: AppLayoutProps) {
-  const { profile, loading } = useAuth();
+  const { authUser, profile, loading } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
-    if (!loading && !profile) {
+    if (!loading && !authUser) {
       router.push("/login");
     }
-  }, [loading, profile, router]);
+  }, [loading, authUser, router]);
 
   if (loading) {
     return <LoadingSkeleton />;
   }
 
-  if (!profile) {
+  if (!authUser) {
     return null;
   }
 
+  if (!profile) {
+    return <LoadingSkeleton />;
+  }
+
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
+    <div className="flex h-screen bg-gray-50">
       {/* Desktop sidebar */}
       <div className="hidden md:flex">
         <Sidebar

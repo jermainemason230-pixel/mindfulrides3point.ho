@@ -7,11 +7,10 @@ import { useRealtime } from "@/hooks/useRealtime";
 import { useToast } from "@/components/ui/Toast";
 import { StatusBadge } from "@/components/rides/StatusBadge";
 import { Card } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
 import { createClient } from "@/lib/supabase/client";
 import { MapPin, Navigation, Clock, Users, AlertTriangle } from "lucide-react";
 import { format, isToday, isFuture } from "date-fns";
-import type { Driver, Ride, DriverStatus, RideStatus } from "@/types/database";
+import type { Driver, Ride, RideStatus } from "@/types/database";
 
 const STATUS_TRANSITIONS: Record<RideStatus, { next: RideStatus; label: string; color: string }> = {
   assigned: {
@@ -49,7 +48,6 @@ export default function DriverPage() {
   const [rides, setRides] = useState<Ride[]>([]);
   const [loadingRides, setLoadingRides] = useState(true);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
-  const [togglingDuty, setTogglingDuty] = useState(false);
 
   const isOnDuty = driver?.status !== "off_duty";
 
@@ -60,20 +58,12 @@ export default function DriverPage() {
   useEffect(() => {
     if (!profile) return;
 
-    const supabase = createClient();
-
     async function fetchDriver() {
-      const { data, error } = await supabase
-        .from("drivers")
-        .select("*")
-        .eq("user_id", profile!.id)
-        .single();
-
-      if (error) {
-        console.error("Failed to fetch driver:", error);
-        return;
-      }
-      setDriver(data);
+      const res = await fetch("/api/drivers");
+      const json = await res.json();
+      const found = (json.drivers ?? []).find((d: any) => d.user_id === profile!.id);
+      if (found) setDriver(found);
+      else console.error("Driver record not found for user", profile!.id);
     }
 
     fetchDriver();
@@ -83,25 +73,14 @@ export default function DriverPage() {
   const fetchRides = useCallback(async () => {
     if (!driver) return;
 
-    const supabase = createClient();
-    const { data, error } = await supabase
-      .from("rides")
-      .select("*")
-      .eq("driver_id", driver.id)
-      .in("status", [
-        "assigned",
-        "driver_en_route",
-        "arrived_at_pickup",
-        "in_transit",
-        "arrived_at_dropoff",
-      ])
-      .order("scheduled_pickup_time", { ascending: true });
-
-    if (error) {
-      console.error("Failed to fetch rides:", error);
-      return;
+    const res = await fetch(`/api/rides?driver_id=${driver.id}`);
+    const json = await res.json();
+    if (json.rides) {
+      const active = json.rides.filter((r: any) =>
+        ["assigned", "driver_en_route", "arrived_at_pickup", "in_transit", "arrived_at_dropoff"].includes(r.status)
+      );
+      setRides(active);
     }
-    setRides(data || []);
     setLoadingRides(false);
   }, [driver]);
 
@@ -121,38 +100,9 @@ export default function DriverPage() {
   );
 
   // Toggle duty status
-  const toggleDutyStatus = async () => {
-    if (!driver) return;
-    setTogglingDuty(true);
-
-    const newStatus: DriverStatus = isOnDuty ? "off_duty" : "available";
-    const supabase = createClient();
-
-    // Optimistic update
-    setDriver((prev) => (prev ? { ...prev, status: newStatus } : prev));
-
-    const { error } = await supabase
-      .from("drivers")
-      .update({ status: newStatus })
-      .eq("id", driver.id);
-
-    if (error) {
-      // Revert on error
-      setDriver((prev) =>
-        prev ? { ...prev, status: isOnDuty ? "available" : "off_duty" } : prev
-      );
-      toast("Failed to update status", "error");
-    } else {
-      toast(
-        newStatus === "available" ? "You are now available" : "You are now off duty",
-        "success"
-      );
-    }
-    setTogglingDuty(false);
-  };
 
   // Update ride status
-  const updateRideStatus = async (rideId: string, newStatus: RideStatus) => {
+  const updateRideStatus = async (rideId: string, newStatus: RideStatus, notes?: string) => {
     setUpdatingStatus(rideId);
 
     // Optimistic update
@@ -161,17 +111,20 @@ export default function DriverPage() {
     );
 
     try {
+      const body: Record<string, unknown> = { status: newStatus };
+      if (notes) body.cancellation_reason = notes;
+
       const res = await fetch(`/api/rides/${rideId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify(body),
       });
 
       if (!res.ok) {
         throw new Error("Failed to update ride");
       }
 
-      const { ride } = await res.json();
+      await res.json();
 
       // If completed, remove from list
       if (newStatus === "completed" || newStatus === "no_show") {
@@ -212,9 +165,19 @@ export default function DriverPage() {
     !isToday(new Date(r.scheduled_pickup_time))
   );
 
+  if (!driver) {
+    return (
+      <div className="max-w-lg mx-auto p-8 text-center">
+        <AlertTriangle className="mx-auto mb-3 h-10 w-10 text-yellow-500" />
+        <p className="font-semibold text-gray-800">Driver profile not found</p>
+        <p className="mt-1 text-sm text-gray-500">Your account exists but has no driver record. Please contact your administrator.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-lg mx-auto">
-      {/* Status Toggle - Sticky below header */}
+      {/* Status Display - Sticky below header */}
       <div className="sticky top-[52px] z-40 bg-white border-b border-gray-100 px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
@@ -223,21 +186,13 @@ export default function DriverPage() {
               {isOnDuty ? "Available" : "Off Duty"}
             </p>
           </div>
-          <button
-            onClick={toggleDutyStatus}
-            disabled={togglingDuty}
-            className={`relative w-16 h-9 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 ${
-              isOnDuty ? "bg-green-500" : "bg-gray-300"
-            } ${togglingDuty ? "opacity-50 cursor-wait" : ""}`}
-            aria-label={isOnDuty ? "Go off duty" : "Go available"}
-          >
-            <span
-              className={`absolute top-1 left-1 w-7 h-7 bg-white rounded-full shadow-md transform transition-transform duration-200 ${
-                isOnDuty ? "translate-x-7" : "translate-x-0"
-              }`}
-            />
-          </button>
+          <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+            isOnDuty ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
+          }`}>
+            {isOnDuty ? "On Shift" : "No Active Shift"}
+          </span>
         </div>
+        <p className="mt-1 text-xs text-gray-400">Your status is managed by your schedule</p>
       </div>
 
       {/* Today's Schedule */}
@@ -309,7 +264,7 @@ export default function DriverPage() {
           </div>
           <p className="text-gray-500 text-base">You are currently off duty</p>
           <p className="text-gray-400 text-sm mt-1">
-            Toggle the switch above to go available
+            Your status will update automatically when your shift starts
           </p>
         </div>
       )}
@@ -326,8 +281,10 @@ function RideCard({
 }: {
   ride: Ride;
   updatingStatus: string | null;
-  onStatusUpdate: (rideId: string, status: RideStatus) => void;
+  onStatusUpdate: (rideId: string, status: RideStatus, notes?: string) => void;
 }) {
+  const [showNoShowForm, setShowNoShowForm] = useState(false);
+  const [noShowNotes, setNoShowNotes] = useState("");
   const transition = STATUS_TRANSITIONS[ride.status];
   const isUpdating = updatingStatus === ride.id;
   const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(ride.pickup_address)}`;
@@ -380,18 +337,64 @@ function RideCard({
         </div>
       </div>
 
-      {/* Vehicle type & shared indicator */}
+      {/* Vehicle type, service level & shared indicator */}
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <span className="inline-flex items-center gap-1 text-xs font-medium bg-gray-100 text-gray-600 px-2 py-1 rounded-full capitalize">
           {ride.vehicle_type_needed}
         </span>
+        {ride.passenger_count > 0 && (
+          <span className="inline-flex items-center gap-1 text-xs font-medium bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
+            <Users size={11} />
+            {ride.passenger_count} passenger{ride.passenger_count !== 1 ? "s" : ""}
+          </span>
+        )}
+        {ride.service_level && (
+          <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full ${
+            ride.service_level === "door_through_door"
+              ? "bg-orange-100 text-orange-700"
+              : ride.service_level === "door_to_door"
+              ? "bg-blue-100 text-blue-700"
+              : "bg-gray-100 text-gray-600"
+          }`}>
+            {ride.service_level === "curb_to_curb" && "Curb-to-Curb"}
+            {ride.service_level === "door_to_door" && "Door-to-Door"}
+            {ride.service_level === "door_through_door" && "Door-Through-Door"}
+          </span>
+        )}
         {ride.is_shared && (
           <span className="inline-flex items-center gap-1 text-xs font-medium bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
             <Users size={12} />
             Shared Ride
           </span>
         )}
+        {ride.ride_direction && ride.ride_direction !== "other" && (
+          <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full ${
+            ride.ride_direction === "to_appointment"
+              ? "bg-purple-50 text-purple-700"
+              : "bg-orange-50 text-orange-700"
+          }`}>
+            {ride.ride_direction === "to_appointment" ? "→ To Appointment" : "← From Appointment"}
+          </span>
+        )}
       </div>
+
+      {/* Appointment time alert */}
+      {ride.ride_direction === "to_appointment" && ride.appointment_time && (
+        <div className="mb-3 flex items-center gap-2 rounded-lg bg-purple-50 border border-purple-200 px-3 py-2">
+          <Clock size={13} className="shrink-0 text-purple-600" />
+          <p className="text-xs text-purple-800 font-medium">
+            Appointment at {format(new Date(ride.appointment_time), "h:mm a")} — rider must arrive on time
+          </p>
+        </div>
+      )}
+      {ride.ride_direction === "from_appointment" && ride.appointment_time && (
+        <div className="mb-3 flex items-center gap-2 rounded-lg bg-orange-50 border border-orange-200 px-3 py-2">
+          <Clock size={13} className="shrink-0 text-orange-600" />
+          <p className="text-xs text-orange-800 font-medium">
+            Appointment ends {format(new Date(ride.appointment_time), "h:mm a")} — do not pick up before then
+          </p>
+        </div>
+      )}
 
       {/* Special notes */}
       {ride.special_notes && (
@@ -412,15 +415,44 @@ function RideCard({
             {isUpdating ? "Updating..." : transition.label}
           </button>
 
-          {/* No Show button when arrived at pickup */}
+          {/* No Show button / form when arrived at pickup */}
           {ride.status === "arrived_at_pickup" && (
-            <button
-              onClick={() => onStatusUpdate(ride.id, "no_show")}
-              disabled={isUpdating}
-              className="w-full min-h-[56px] rounded-xl font-semibold text-base bg-red-600 hover:bg-red-700 text-white transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-wait"
-            >
-              {isUpdating ? "Updating..." : "No Show"}
-            </button>
+            showNoShowForm ? (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 space-y-3">
+                <p className="text-sm font-semibold text-red-700">No Show — Add Notes</p>
+                <textarea
+                  className="w-full rounded-lg border border-red-200 bg-white px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"
+                  rows={3}
+                  placeholder="Describe the situation (e.g. patient didn't answer door, called and no response...)"
+                  value={noShowNotes}
+                  onChange={(e) => setNoShowNotes(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setShowNoShowForm(false); setNoShowNotes(""); }}
+                    disabled={isUpdating}
+                    className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => onStatusUpdate(ride.id, "no_show", noShowNotes)}
+                    disabled={isUpdating}
+                    className="flex-1 py-2.5 rounded-lg text-sm font-semibold bg-red-600 hover:bg-red-700 text-white disabled:opacity-50 disabled:cursor-wait"
+                  >
+                    {isUpdating ? "Submitting..." : "Confirm No Show"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowNoShowForm(true)}
+                disabled={isUpdating}
+                className="w-full min-h-[56px] rounded-xl font-semibold text-base bg-red-600 hover:bg-red-700 text-white transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-wait"
+              >
+                No Show
+              </button>
+            )
           )}
         </div>
       )}

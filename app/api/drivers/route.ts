@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  createServerSupabaseClient,
-  createServiceRoleClient,
-} from "@/lib/supabase/server";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createServerSupabaseClient();
+    const supabase = await createServerSupabaseClient();
 
     const {
       data: { user },
@@ -37,7 +35,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createServerSupabaseClient();
+    const supabase = await createServerSupabaseClient();
 
     const {
       data: { user },
@@ -68,7 +66,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const serviceClient = createServiceRoleClient();
+    const serviceClient = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
 
     // Create auth user
     const { data: authData, error: authCreateError } =

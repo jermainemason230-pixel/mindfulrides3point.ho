@@ -27,17 +27,17 @@ interface NavItem {
 }
 
 const adminNavItems: NavItem[] = [
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Drivers", href: "/drivers", icon: Car },
-  { label: "Facilities", href: "/facilities", icon: Building2 },
-  { label: "Invoicing", href: "/invoicing", icon: FileText },
-  { label: "Analytics", href: "/analytics", icon: BarChart3 },
-  { label: "Settings", href: "/settings", icon: Settings },
+  { label: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
+  { label: "Drivers", href: "/admin/drivers", icon: Car },
+  { label: "Facilities", href: "/admin/facilities", icon: Building2 },
+  { label: "Invoicing", href: "/admin/invoicing", icon: FileText },
+  { label: "Analytics", href: "/admin/analytics", icon: BarChart3 },
+  { label: "Settings", href: "/admin/settings", icon: Settings },
 ];
 
 const facilityStaffNavItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Ride History", href: "/rides", icon: Clock },
+  { label: "Ride History", href: "/history", icon: Clock },
   { label: "Invoices", href: "/invoices", icon: FileText },
 ];
 

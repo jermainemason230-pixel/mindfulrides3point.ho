@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRealtime } from "@/hooks/useRealtime";
+import MapView from "@/components/maps/MapView";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -108,25 +109,16 @@ export default function AdminDashboardPage() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const [ridesRes, driversRes, facilitiesRes] = await Promise.all([
-      supabase
-        .from("rides")
-        .select("*, organization:organizations(*), driver:drivers(*, user:users(*))")
-        .order("scheduled_pickup_time", { ascending: false }),
-      supabase
-        .from("drivers")
-        .select("*, user:users(*)")
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("organizations")
-        .select("*")
-        .order("name"),
+    const [ridesJson, driversJson, facilitiesJson] = await Promise.all([
+      fetch("/api/rides?limit=200").then((r) => r.json()),
+      fetch("/api/drivers").then((r) => r.json()),
+      fetch("/api/facilities").then((r) => r.json()),
     ]);
-    if (ridesRes.data) setRides(ridesRes.data as unknown as Ride[]);
-    if (driversRes.data) setDrivers(driversRes.data as unknown as Driver[]);
-    if (facilitiesRes.data) setFacilities(facilitiesRes.data as unknown as Organization[]);
+    if (ridesJson.rides) setRides(ridesJson.rides as unknown as Ride[]);
+    if (driversJson.drivers) setDrivers(driversJson.drivers as unknown as Driver[]);
+    if (facilitiesJson.facilities) setFacilities(facilitiesJson.facilities as unknown as Organization[]);
     setLoading(false);
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -246,19 +238,9 @@ export default function AdminDashboardPage() {
         />
       </div>
 
-      {/* Map Placeholder */}
+      {/* Live Map */}
       <Card className="overflow-hidden">
-        <div
-          id="admin-map"
-          className="flex h-[400px] w-full items-center justify-center bg-gray-100"
-        >
-          <div className="flex flex-col items-center gap-2 text-gray-400">
-            <MapPin className="h-10 w-10" />
-            <p className="text-sm">
-              Map will appear when Mapbox token is configured
-            </p>
-          </div>
-        </div>
+        <MapView className="h-[400px] w-full" zoom={4} />
       </Card>
 
       {/* Ride Management */}
@@ -360,6 +342,11 @@ export default function AdminDashboardPage() {
                       <Badge variant={STATUS_BADGE_MAP[ride.status]}>
                         {statusConfig.label}
                       </Badge>
+                      {(ride.status === "no_show" || ride.status === "cancelled") && ride.cancellation_reason && (
+                        <p className="mt-1 text-xs text-red-600 max-w-[160px] truncate" title={ride.cancellation_reason}>
+                          {ride.cancellation_reason}
+                        </p>
+                      )}
                     </td>
                     <td className="py-3 pr-4 text-gray-600">
                       {ride.driver?.user?.full_name ?? "Unassigned"}

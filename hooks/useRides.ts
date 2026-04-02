@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { Ride } from "@/types/database";
 import { useRealtime } from "./useRealtime";
 
@@ -10,22 +9,13 @@ export function useRides(organizationId?: string, driverId?: string) {
   const [loading, setLoading] = useState(true);
 
   const fetchRides = useCallback(async () => {
-    const supabase = createClient();
-    let query = supabase
-      .from("rides")
-      .select("*, organization:organizations(*), driver:drivers(*, user:users(*))")
-      .order("scheduled_pickup_time", { ascending: true });
+    const params = new URLSearchParams({ limit: "100" });
+    if (organizationId) params.set("organization_id", organizationId);
+    if (driverId) params.set("driver_id", driverId);
 
-    if (organizationId) {
-      query = query.eq("organization_id", organizationId);
-    }
-
-    if (driverId) {
-      query = query.eq("driver_id", driverId);
-    }
-
-    const { data } = await query;
-    setRides((data as Ride[]) || []);
+    const res = await fetch(`/api/rides?${params}`);
+    const json = await res.json();
+    setRides((json.rides as Ride[]) || []);
     setLoading(false);
   }, [organizationId, driverId]);
 

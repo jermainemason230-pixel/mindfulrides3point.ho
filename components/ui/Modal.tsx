@@ -49,17 +49,17 @@ export function Modal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-8 px-4">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/50 transition-opacity"
+        className="fixed inset-0 bg-black/50 transition-opacity"
         onClick={onClose}
       />
 
       {/* Panel */}
       <div
         className={cn(
-          "relative w-full mx-4 bg-white rounded-lg shadow-xl",
+          "relative w-full bg-white rounded-lg shadow-xl my-auto",
           sizeStyles[size]
         )}
       >

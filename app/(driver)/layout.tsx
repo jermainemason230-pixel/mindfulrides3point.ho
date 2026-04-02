@@ -10,17 +10,18 @@ export default function DriverLayout({ children }: { children: React.ReactNode }
   const { profile, loading } = useAuth();
   const router = useRouter();
 
-  if (loading) {
+  useEffect(() => {
+    if (!loading && !profile) {
+      router.push("/login");
+    }
+  }, [loading, profile, router]);
+
+  if (loading || !profile) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-pulse text-gray-400">Loading...</div>
       </div>
     );
-  }
-
-  if (!profile) {
-    router.push("/login");
-    return null;
   }
 
   const handleLogout = async () => {

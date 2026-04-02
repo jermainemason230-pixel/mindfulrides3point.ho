@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createServerSupabaseClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { calculateRideCost } from "@/lib/pricing";
 import {
   sendWebhook,
@@ -8,25 +8,27 @@ import {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = createServerSupabaseClient();
+    const { id } = await params;
+    const authClient = await createServerSupabaseClient();
 
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = await authClient.auth.getUser();
     if (authError || !user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { data: ride, error } = await supabase
+    const db = createServiceRoleClient();
+    const { data: ride, error } = await db
       .from("rides")
       .select(
         "*, organization:organizations(*), driver:drivers(*, user:users(*)), booked_by_user:users!booked_by(*)"
       )
-      .eq("id", params.id)
+      .eq("id", id)
       .single();
 
     if (error) {
@@ -45,28 +47,29 @@ export async function GET(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = createServerSupabaseClient();
+    const { id } = await params;
+    const authClient = await createServerSupabaseClient();
 
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = await authClient.auth.getUser();
     if (authError || !user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = await request.json();
+    const db = createServiceRoleClient();
 
-    // Fetch current ride to check status transitions
-    const { data: currentRide, error: fetchError } = await supabase
+    const { data: currentRide, error: fetchError } = await db
       .from("rides")
       .select(
         "*, organization:organizations(*), driver:drivers(*, user:users(*))"
       )
-      .eq("id", params.id)
+      .eq("id", id)
       .single();
 
     if (fetchError || !currentRide) {
@@ -78,20 +81,14 @@ export async function PATCH(
       updated_at: new Date().toISOString(),
     };
 
-    // Handle status-specific logic
     if (body.status && body.status !== currentRide.status) {
       switch (body.status) {
-        case "driver_en_route":
-          // Driver started heading to pickup
-          break;
-
         case "arrived_at_pickup":
           updateData.actual_pickup_time = new Date().toISOString();
           break;
 
         case "completed":
           updateData.actual_dropoff_time = new Date().toISOString();
-          // Calculate final cost
           if (
             currentRide.estimated_distance_miles &&
             currentRide.vehicle_type_needed
@@ -114,10 +111,10 @@ export async function PATCH(
       }
     }
 
-    const { data: ride, error } = await supabase
+    const { data: ride, error } = await db
       .from("rides")
       .update(updateData)
-      .eq("id", params.id)
+      .eq("id", id)
       .select(
         "*, organization:organizations(*), driver:drivers(*, user:users(*))"
       )
@@ -127,7 +124,6 @@ export async function PATCH(
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Send webhook for status changes
     if (body.status && body.status !== currentRide.status) {
       const webhookEvents: Record<string, string> = {
         driver_en_route: "driver_en_route",
@@ -162,27 +158,29 @@ export async function PATCH(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = createServerSupabaseClient();
+    const { id } = await params;
+    const authClient = await createServerSupabaseClient();
 
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = await authClient.auth.getUser();
     if (authError || !user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { data: ride, error } = await supabase
+    const db = createServiceRoleClient();
+    const { data: ride, error } = await db
       .from("rides")
       .update({
         status: "cancelled",
         cancellation_reason: "Cancelled via API",
         updated_at: new Date().toISOString(),
       })
-      .eq("id", params.id)
+      .eq("id", id)
       .select(
         "*, organization:organizations(*), driver:drivers(*, user:users(*))"
       )
@@ -192,7 +190,6 @@ export async function DELETE(
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Send cancellation webhook
     await sendWebhook(
       buildRideWebhookPayload(
         "ride_cancelled",

@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Calendar,
   Car,
   ChevronDown,
   ChevronUp,
   Plus,
+  Trash2,
   User as UserIcon,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -13,6 +15,7 @@ import { useRealtime } from "@/hooks/useRealtime";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { useToast } from "@/components/ui/Toast";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Modal } from "@/components/ui/Modal";
@@ -34,6 +37,7 @@ const STATUS_BADGE: Record<DriverStatus, { variant: "green" | "blue" | "gray"; l
 
 export default function DriversPage() {
   const supabase = useMemo(() => createClient(), []);
+  const { toast } = useToast();
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -41,6 +45,19 @@ export default function DriversPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [driverRides, setDriverRides] = useState<Ride[]>([]);
   const [ridesLoading, setRidesLoading] = useState(false);
+
+  // Schedule modal state
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [scheduleDriver, setScheduleDriver] = useState<Driver | null>(null);
+  const [schedules, setSchedules] = useState<any[]>([]);
+  const [schedulesLoading, setSchedulesLoading] = useState(false);
+  const [scheduleSubmitting, setScheduleSubmitting] = useState(false);
+  const [scheduleForm, setScheduleForm] = useState({
+    scheduled_date: "",
+    start_time: "",
+    end_time: "",
+    notes: "",
+  });
 
   // Form state
   const [form, setForm] = useState({
@@ -116,7 +133,9 @@ export default function DriversPage() {
           max_passengers: parseInt(form.max_passengers) || 3,
         }),
       });
+      const json = await res.json();
       if (res.ok) {
+        toast("Driver added successfully.", "success");
         setModalOpen(false);
         setForm({
           full_name: "",
@@ -131,7 +150,11 @@ export default function DriversPage() {
           max_passengers: "3",
         });
         fetchDrivers();
+      } else {
+        toast(json.error ?? "Failed to add driver.", "error");
       }
+    } catch {
+      toast("An unexpected error occurred.", "error");
     } finally {
       setSubmitting(false);
     }
@@ -147,6 +170,53 @@ export default function DriversPage() {
 
   const updateField = (field: string, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const openScheduleModal = async (driver: Driver) => {
+    setScheduleDriver(driver);
+    setScheduleModalOpen(true);
+    setSchedulesLoading(true);
+    const res = await fetch(`/api/drivers/schedules?driver_id=${driver.id}`);
+    const json = await res.json();
+    setSchedules(json.schedules ?? []);
+    setSchedulesLoading(false);
+  };
+
+  const handleScheduleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!scheduleDriver) return;
+
+    if (scheduleForm.start_time >= scheduleForm.end_time) {
+      toast("End time must be after start time.", "error");
+      return;
+    }
+
+    setScheduleSubmitting(true);
+    try {
+      const res = await fetch("/api/drivers/schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ driver_id: scheduleDriver.id, ...scheduleForm }),
+      });
+      const json = await res.json();
+      if (res.ok) {
+        setSchedules((prev) => [...prev, json.schedule]);
+        setScheduleForm({ scheduled_date: "", start_time: "", end_time: "", notes: "" });
+        toast("Shift scheduled.", "success");
+      } else {
+        toast(json.error ?? "Failed to schedule shift.", "error");
+      }
+    } finally {
+      setScheduleSubmitting(false);
+    }
+  };
+
+  const handleDeleteSchedule = async (id: string) => {
+    const res = await fetch(`/api/drivers/schedules?id=${id}`, { method: "DELETE" });
+    if (res.ok) {
+      setSchedules((prev) => prev.filter((s) => s.id !== id));
+      toast("Shift removed.", "success");
+    }
   };
 
   if (loading) {
@@ -220,6 +290,13 @@ export default function DriversPage() {
                   onClick={() => toggleActive(driver)}
                 >
                   {driver.is_active ? "Deactivate" : "Activate"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => openScheduleModal(driver)}
+                >
+                  <Calendar className="h-4 w-4" />
                 </Button>
                 <Button
                   variant="secondary"
@@ -371,6 +448,94 @@ export default function DriversPage() {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Schedule Modal */}
+      <Modal
+        isOpen={scheduleModalOpen}
+        onClose={() => { setScheduleModalOpen(false); setScheduleDriver(null); }}
+        title={`Schedule — ${scheduleDriver?.user?.full_name ?? "Driver"}`}
+        size="lg"
+      >
+        <div className="space-y-6">
+          {/* Add Shift Form */}
+          <form onSubmit={handleScheduleSubmit} className="space-y-4">
+            <h4 className="text-sm font-semibold text-gray-700">Add Shift</h4>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Input
+                label="Date"
+                type="date"
+                required
+                value={scheduleForm.scheduled_date}
+                onChange={(e) => setScheduleForm((p) => ({ ...p, scheduled_date: e.target.value }))}
+              />
+              <Input
+                label="Start Time"
+                type="time"
+                required
+                value={scheduleForm.start_time}
+                onChange={(e) => setScheduleForm((p) => ({ ...p, start_time: e.target.value }))}
+              />
+              <Input
+                label="End Time"
+                type="time"
+                required
+                value={scheduleForm.end_time}
+                onChange={(e) => setScheduleForm((p) => ({ ...p, end_time: e.target.value }))}
+              />
+            </div>
+            <Input
+              label="Notes (optional)"
+              value={scheduleForm.notes}
+              onChange={(e) => setScheduleForm((p) => ({ ...p, notes: e.target.value }))}
+            />
+            <div className="flex justify-end">
+              <Button type="submit" loading={scheduleSubmitting}>
+                <Plus className="mr-1 h-4 w-4" /> Add Shift
+              </Button>
+            </div>
+          </form>
+
+          {/* Upcoming Shifts */}
+          <div>
+            <h4 className="mb-3 text-sm font-semibold text-gray-700">Upcoming Shifts</h4>
+            {schedulesLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            ) : schedules.length === 0 ? (
+              <p className="text-sm text-gray-400">No shifts scheduled yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {schedules.map((s) => (
+                  <li key={s.id} className="flex items-center justify-between rounded-lg border border-gray-100 px-4 py-3 text-sm">
+                    <div>
+                      <span className="font-medium text-gray-900">
+                        {new Date(s.scheduled_date + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                      </span>
+                      <span className="ml-3 text-gray-500">
+                        {s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)}
+                      </span>
+                      {s.notes && <span className="ml-3 text-gray-400 italic">{s.notes}</span>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={s.status === "confirmed" ? "green" : s.status === "cancelled" ? "red" : "gray"}>
+                        {s.status}
+                      </Badge>
+                      <button
+                        onClick={() => handleDeleteSchedule(s.id)}
+                        className="text-gray-400 hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
       </Modal>
     </div>
   );

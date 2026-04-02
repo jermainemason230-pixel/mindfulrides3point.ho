@@ -3,7 +3,18 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { User } from "@/types/database";
-import type { User as AuthUser } from "@supabase/supabase-js";
+import type { User as AuthUser, Session, AuthChangeEvent } from "@supabase/supabase-js"; // eslint-disable-line @typescript-eslint/no-unused-vars
+
+async function fetchProfile(_userId: string): Promise<User | null> {
+  try {
+    const res = await fetch(`/api/auth/me`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.user ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export function useAuth() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -12,41 +23,49 @@ export function useAuth() {
 
   useEffect(() => {
     const supabase = createClient();
+    let resolved = false;
 
-    async function getUser() {
-      const { data: { user } } = await supabase.auth.getUser();
-      setAuthUser(user);
-
-      if (user) {
-        const { data } = await supabase
-          .from("users")
-          .select("*")
-          .eq("id", user.id)
-          .single();
-        setProfile(data);
-      }
+    const finish = () => {
+      resolved = true;
       setLoading(false);
-    }
+    };
 
-    getUser();
+    const timeout = setTimeout(() => {
+      if (!resolved) finish();
+    }, 5000);
+
+    supabase.auth.getSession().then(async ({ data }: { data: { session: Session | null } }) => {
+      const session = data.session;
+      if (resolved) return;
+      setAuthUser(session?.user ?? null);
+      if (session?.user) {
+        const p = await fetchProfile(session.user.id);
+        setProfile(p);
+      }
+      clearTimeout(timeout);
+      finish();
+    }).catch(() => {
+      clearTimeout(timeout);
+      finish();
+    });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        setAuthUser(session?.user || null);
+      async (_event: AuthChangeEvent, session: Session | null) => {
+        setAuthUser(session?.user ?? null);
         if (session?.user) {
-          const { data } = await supabase
-            .from("users")
-            .select("*")
-            .eq("id", session.user.id)
-            .single();
-          setProfile(data);
+          const p = await fetchProfile(session.user.id);
+          setProfile(p);
         } else {
           setProfile(null);
+          setLoading(false);
         }
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, []);
 
   return { authUser, profile, loading };

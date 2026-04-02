@@ -81,8 +81,13 @@ export interface Ride {
   is_asap: boolean;
   return_pickup_time: string | null;
   status: RideStatus;
+  ride_direction: "to_appointment" | "from_appointment" | "other";
+  allow_shared_ride: boolean;
+  appointment_time: string | null;
   is_shared: boolean;
   shared_group_id: string | null;
+  service_level: "curb_to_curb" | "door_to_door" | "door_through_door";
+  passenger_count: number;
   special_notes: string | null;
   estimated_cost: number | null;
   final_cost: number | null;
