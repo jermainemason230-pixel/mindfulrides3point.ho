@@ -71,7 +71,9 @@ export async function POST(request: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Create auth user
+    // Try to create auth user; if email already exists, look up the existing user instead
+    let newUserId: string;
+
     const { data: authData, error: authCreateError } =
       await serviceClient.auth.admin.createUser({
         email,
@@ -80,57 +82,75 @@ export async function POST(request: NextRequest) {
       });
 
     if (authCreateError) {
-      return NextResponse.json(
-        { error: authCreateError.message },
-        { status: 400 }
-      );
+      if (!authCreateError.message.toLowerCase().includes("already registered")) {
+        return NextResponse.json(
+          { error: authCreateError.message },
+          { status: 400 }
+        );
+      }
+
+      // User already exists — find them by email
+      const { data: listData, error: listError } =
+        await serviceClient.auth.admin.listUsers();
+      if (listError) {
+        return NextResponse.json({ error: listError.message }, { status: 500 });
+      }
+      const existing = listData.users.find((u) => u.email === email);
+      if (!existing) {
+        return NextResponse.json(
+          { error: "User exists but could not be located." },
+          { status: 500 }
+        );
+      }
+      newUserId = existing.id;
+    } else {
+      newUserId = authData.user.id;
     }
 
-    const newUserId = authData.user.id;
-
-    // Create users record
+    // Upsert users record (driver may have self-registered)
     const { error: userInsertError } = await serviceClient
       .from("users")
-      .insert({
-        id: newUserId,
-        email,
-        full_name,
-        phone: phone || null,
-        role: "driver",
-        is_active: true,
-      });
+      .upsert(
+        {
+          id: newUserId,
+          email,
+          full_name,
+          phone: phone || null,
+          role: "driver",
+          is_active: true,
+        },
+        { onConflict: "id" }
+      );
 
     if (userInsertError) {
-      // Clean up auth user on failure
-      await serviceClient.auth.admin.deleteUser(newUserId);
       return NextResponse.json(
         { error: userInsertError.message },
         { status: 500 }
       );
     }
 
-    // Create driver record
+    // Upsert driver record (self-registered drivers may already have a stub row)
     const { data: driver, error: driverError } = await serviceClient
       .from("drivers")
-      .insert({
-        user_id: newUserId,
-        vehicle_type,
-        vehicle_make: vehicle_make || null,
-        vehicle_model: vehicle_model || null,
-        vehicle_year: vehicle_year || null,
-        vehicle_color: vehicle_color || null,
-        license_plate: license_plate || null,
-        max_passengers: max_passengers || 1,
-        status: "off_duty",
-        is_active: true,
-      })
+      .upsert(
+        {
+          user_id: newUserId,
+          vehicle_type,
+          vehicle_make: vehicle_make || null,
+          vehicle_model: vehicle_model || null,
+          vehicle_year: vehicle_year || null,
+          vehicle_color: vehicle_color || null,
+          license_plate: license_plate || null,
+          max_passengers: max_passengers || 1,
+          status: "off_duty",
+          is_active: true,
+        },
+        { onConflict: "user_id" }
+      )
       .select("*, user:users(*)")
       .single();
 
     if (driverError) {
-      // Clean up on failure
-      await serviceClient.from("users").delete().eq("id", newUserId);
-      await serviceClient.auth.admin.deleteUser(newUserId);
       return NextResponse.json(
         { error: driverError.message },
         { status: 500 }

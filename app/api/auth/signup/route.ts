@@ -40,6 +40,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: profileError.message }, { status: 400 });
     }
 
+    // If registering as a driver, create a stub drivers row so the driver page works immediately
+    if (role === "driver") {
+      await supabase.from("drivers").insert({
+        user_id: data.user.id,
+        vehicle_type: "ambulatory",
+        max_passengers: 1,
+        status: "off_duty",
+        is_active: true,
+      });
+    }
+
     return NextResponse.json({ userId: data.user.id }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

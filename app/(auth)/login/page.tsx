@@ -1,10 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import type { AuthChangeEvent } from "@supabase/supabase-js";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
@@ -17,7 +15,6 @@ const ROLE_REDIRECTS: Record<UserRole, string> = {
 };
 
 export default function LoginPage() {
-  const router = useRouter();
   const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -28,49 +25,37 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      console.log("[login] step 1: creating client");
       const supabase = createClient();
 
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      console.log("[login] step 2: signing in");
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
+        console.log("[login] auth error:", error.message);
         toast(error.message, "error");
         return;
       }
 
-      const { data: userData, error: userError } = await supabase
-        .from("users")
-        .select("role")
-        .eq("id", data.user.id)
-        .single();
-
-      if (userError || !userData) {
-        toast(userError?.message ?? "No profile found for this user.", "error");
+      console.log("[login] step 3: fetching profile");
+      const res = await fetch("/api/auth/me");
+      console.log("[login] step 4: got response", res.status);
+      if (!res.ok) {
+        toast("Signed in but could not load your profile. Please refresh.", "error");
         return;
       }
 
-      const redirectPath = ROLE_REDIRECTS[userData.role as UserRole];
+      const { user } = await res.json();
+      const redirectPath = ROLE_REDIRECTS[user.role as UserRole];
       if (!redirectPath) {
         toast("Unknown user role. Please contact support.", "error");
         return;
       }
 
-      // Wait for onAuthStateChange to fire and write the session cookie
-      await new Promise<void>((resolve) => {
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((event: string) => {
-          if (event === "SIGNED_IN") {
-            subscription.unsubscribe();
-            resolve();
-          }
-        });
-        setTimeout(resolve, 1500);
-      });
-
       window.location.href = redirectPath;
-    } catch {
-      toast("An unexpected error occurred. Please try again.", "error");
+    } catch (err) {
+      console.error("[login] caught:", err);
+      toast(err instanceof Error ? err.message : `Error: ${String(err)}`, "error");
     } finally {
       setLoading(false);
     }

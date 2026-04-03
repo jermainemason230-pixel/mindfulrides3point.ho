@@ -6,7 +6,6 @@ import { Plus, MapPin, Clock, User, Users, Search, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useTodayRides } from "@/hooks/useRides";
 import { useRealtime } from "@/hooks/useRealtime";
-import { createClient } from "@/lib/supabase/client";
 import { formatAddress, formatCurrency } from "@/lib/utils";
 import { geocodeAddress, getRouteDistance } from "@/lib/mapbox/geocoding";
 import { calculateRideCost } from "@/lib/pricing";
@@ -78,6 +77,7 @@ interface BookingForm {
   passenger_count: number;
   is_asap: boolean;
   scheduled_pickup_time: string;
+  return_pickup_time: string;
   special_notes: string;
   ride_direction: RideDirection;
   allow_shared_ride: boolean;
@@ -95,6 +95,7 @@ const INITIAL_FORM: BookingForm = {
   passenger_count: 1,
   is_asap: true,
   scheduled_pickup_time: "",
+  return_pickup_time: "",
   special_notes: "",
   ride_direction: "other",
   allow_shared_ride: true,
@@ -305,7 +306,8 @@ function BookingModal({
           form.dropoff_address.trim().length > 0
         );
       case 2:
-        return form.is_asap || form.scheduled_pickup_time.length > 0;
+        return (form.is_asap || form.scheduled_pickup_time.length > 0) &&
+          (form.ride_type !== "round_trip" || form.return_pickup_time.length > 0);
       default:
         return true;
     }
@@ -361,7 +363,44 @@ function BookingModal({
         return;
       }
 
-      toast("Ride booked successfully!", "success");
+      // For round trips, create the return leg (swapped addresses, flipped direction)
+      if (form.ride_type === "round_trip" && form.return_pickup_time) {
+        const returnTime = new Date(form.return_pickup_time);
+        const rlpad = (n: number) => String(n).padStart(2, "0");
+        const returnDirection: RideDirection =
+          form.ride_direction === "to_appointment" ? "from_appointment"
+          : form.ride_direction === "from_appointment" ? "to_appointment"
+          : "other";
+
+        const returnPayload = {
+          ...payload,
+          pickup_address: form.dropoff_address,
+          dropoff_address: form.pickup_address,
+          scheduled_pickup_time: returnTime.toISOString(),
+          local_date: `${returnTime.getFullYear()}-${rlpad(returnTime.getMonth()+1)}-${rlpad(returnTime.getDate())}`,
+          local_time: `${rlpad(returnTime.getHours())}:${rlpad(returnTime.getMinutes())}:00`,
+          is_asap: false,
+          ride_direction: returnDirection,
+          appointment_time: null,
+          ride_type: "one_way",
+        };
+
+        const returnRes = await fetch("/api/rides", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(returnPayload),
+        });
+
+        if (!returnRes.ok) {
+          const errData = await returnRes.json().catch(() => ({}));
+          toast(`Outbound ride booked, but return ride failed: ${errData.error ?? "unknown error"}`, "error");
+          onSuccess();
+          onClose();
+          return;
+        }
+      }
+
+      toast(form.ride_type === "round_trip" ? "Round trip booked successfully!" : "Ride booked successfully!", "success");
       onSuccess();
       onClose();
     } catch (err) {
@@ -570,10 +609,23 @@ function BookingModal({
             </div>
           </div>
 
+          {/* Return pickup time — round trip only */}
+          {form.ride_type === "round_trip" && (
+            <Input
+              label="Return Pickup Time"
+              type="datetime-local"
+              required
+              value={form.return_pickup_time}
+              min={form.scheduled_pickup_time || new Date().toISOString().slice(0, 16)}
+              max={(() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 16); })()}
+              onChange={(e) => update("return_pickup_time", e.target.value)}
+            />
+          )}
+
           {/* ASAP / Scheduled toggle */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              When
+              {form.ride_type === "round_trip" ? "Outbound Pickup" : "When"}
             </label>
             <div className="flex rounded-lg border border-gray-300 overflow-hidden">
               <button
@@ -628,6 +680,8 @@ function BookingModal({
               type="datetime-local"
               required
               value={form.scheduled_pickup_time}
+              min={new Date().toISOString().slice(0, 16)}
+              max={(() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 16); })()}
               onChange={(e) =>
                 update("scheduled_pickup_time", e.target.value)
               }
@@ -850,16 +904,21 @@ function BookingModal({
               </span>
             </div>
             <div className="flex justify-between px-4 py-3">
-              <span className="text-sm text-gray-500">When</span>
+              <span className="text-sm text-gray-500">{form.ride_type === "round_trip" ? "Outbound Pickup" : "When"}</span>
               <span className="text-sm font-medium text-gray-900">
                 {form.is_asap
                   ? "ASAP"
-                  : format(
-                      new Date(form.scheduled_pickup_time),
-                      "MMM d, yyyy h:mm a"
-                    )}
+                  : format(new Date(form.scheduled_pickup_time), "MMM d, yyyy h:mm a")}
               </span>
             </div>
+            {form.ride_type === "round_trip" && form.return_pickup_time && (
+              <div className="flex justify-between px-4 py-3">
+                <span className="text-sm text-gray-500">Return Pickup</span>
+                <span className="text-sm font-medium text-gray-900">
+                  {format(new Date(form.return_pickup_time), "MMM d, yyyy h:mm a")}
+                </span>
+              </div>
+            )}
             {form.special_notes && (
               <div className="flex justify-between px-4 py-3">
                 <span className="text-sm text-gray-500">Notes</span>
@@ -939,12 +998,16 @@ function BookingModal({
 /*  Ride Card                                                          */
 /* ------------------------------------------------------------------ */
 
+const CANCELLABLE_STATUSES: RideStatus[] = ["requested", "assigned", "driver_en_route", "arrived_at_pickup"];
+
 function RideCard({
   ride,
   onViewDetails,
+  onCancel,
 }: {
   ride: Ride;
   onViewDetails: (id: string) => void;
+  onCancel?: (id: string) => void;
 }) {
   const driverName =
     ride.driver?.user?.full_name ?? null;
@@ -1018,9 +1081,17 @@ function RideCard({
           )}
         </div>
 
-        {/* Time indicator */}
-        <div className="flex items-center gap-1 text-gray-400 flex-shrink-0">
-          <Clock className="h-4 w-4" />
+        {/* Actions */}
+        <div className="flex flex-col items-end gap-2 flex-shrink-0">
+          <Clock className="h-4 w-4 text-gray-400" />
+          {onCancel && CANCELLABLE_STATUSES.includes(ride.status) && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onCancel(ride.id); }}
+              className="text-xs text-red-500 hover:text-red-700 font-medium"
+            >
+              Cancel
+            </button>
+          )}
         </div>
       </div>
     </Card>
@@ -1062,6 +1133,9 @@ export default function FacilityDashboardPage() {
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const [upcomingRides, setUpcomingRides] = useState<Ride[]>([]);
   const [upcomingLoading, setUpcomingLoading] = useState(true);
+  const [cancellingRideId, setCancellingRideId] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
 
   // Fetch upcoming rides (after today)
   const fetchUpcoming = useCallback(async () => {
@@ -1127,18 +1201,35 @@ export default function FacilityDashboardPage() {
     return () => clearTimeout(timer);
   }, [searchQuery, organizationId, isAdminUser, isSearching]);
 
-  async function handleCancelRide(rideId: string) {
-    const supabase = createClient();
-    const { error } = await supabase
-      .from("rides")
-      .update({ status: "cancelled" })
-      .eq("id", rideId);
+  function openCancelDialog(rideId: string) {
+    setCancellingRideId(rideId);
+    setCancelReason("");
+  }
 
-    if (error) {
+  async function confirmCancelRide() {
+    if (!cancellingRideId) return;
+    setCancelSubmitting(true);
+    try {
+      const res = await fetch(`/api/rides/${cancellingRideId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "cancelled",
+          cancellation_reason: cancelReason.trim() || "Cancelled by facility",
+        }),
+      });
+      if (!res.ok) {
+        const json = await res.json();
+        toast(json.error ?? "Failed to cancel ride.", "error");
+      } else {
+        toast("Ride cancelled.", "success");
+        setCancellingRideId(null);
+        fetchUpcoming();
+      }
+    } catch {
       toast("Failed to cancel ride.", "error");
-    } else {
-      toast("Ride cancelled.", "success");
-      fetchUpcoming();
+    } finally {
+      setCancelSubmitting(false);
     }
   }
 
@@ -1183,6 +1274,37 @@ export default function FacilityDashboardPage() {
           onSuccess={fetchUpcoming}
         />
       )}
+
+      {/* Cancel Confirmation Modal */}
+      <Modal
+        isOpen={!!cancellingRideId}
+        onClose={() => setCancellingRideId(null)}
+        title="Cancel Ride"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">Are you sure you want to cancel this ride?</p>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Reason <span className="text-gray-400 font-normal">(optional)</span>
+            </label>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="e.g. Patient appointment rescheduled"
+              rows={3}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black resize-none"
+            />
+          </div>
+          <div className="flex gap-3 justify-end">
+            <Button variant="secondary" onClick={() => setCancellingRideId(null)} disabled={cancelSubmitting}>
+              Keep Ride
+            </Button>
+            <Button variant="danger" onClick={confirmCancelRide} loading={cancelSubmitting}>
+              Cancel Ride
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Search Bar */}
       <div className="relative">
@@ -1319,6 +1441,7 @@ export default function FacilityDashboardPage() {
                 key={ride.id}
                 ride={ride}
                 onViewDetails={handleViewDetails}
+                onCancel={openCancelDialog}
               />
             ))}
           </div>
@@ -1379,14 +1502,16 @@ export default function FacilityDashboardPage() {
                     >
                       Edit
                     </Button>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      className="min-h-[36px]"
-                      onClick={() => handleCancelRide(ride.id)}
-                    >
-                      Cancel
-                    </Button>
+                    {CANCELLABLE_STATUSES.includes(ride.status) && (
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        className="min-h-[36px]"
+                        onClick={() => openCancelDialog(ride.id)}
+                      >
+                        Cancel
+                      </Button>
+                    )}
                   </div>
                 </div>
               </Card>

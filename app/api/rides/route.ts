@@ -125,8 +125,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "organization_id is required" }, { status: 400 });
     }
 
+    // Enforce 30-day advance booking limit
+    const pickupTime = new Date(body.scheduled_pickup_time);
+    const maxAdvance = new Date();
+    maxAdvance.setDate(maxAdvance.getDate() + 30);
+    if (pickupTime > maxAdvance) {
+      return NextResponse.json(
+        { error: "Rides cannot be booked more than 30 days in advance." },
+        { status: 400 }
+      );
+    }
+
     // Check for driver conflicts over the full ride window, respecting vehicle type + capacity
-    const pickupTime  = new Date(body.scheduled_pickup_time);
     // Use total blocked time (pickup buffer + buffered ride + drop-off buffer) for conflict detection
     const rawDuration  = estimatedDuration ?? 60;
     const durationMins = totalBlockedMinutes(rawDuration);
