@@ -307,7 +307,7 @@ function BookingModal({
   function canProceed(): boolean {
     switch (step) {
       case 0:
-        return form.patient_name.trim().length > 0 && (!isAdmin || selectedOrgId.length > 0);
+        return form.patient_name.trim().length > 0 && form.patient_phone.trim().length > 0 && (!isAdmin || selectedOrgId.length > 0);
       case 1:
         return (
           form.pickup_address.trim().length > 0 &&
@@ -474,6 +474,7 @@ function BookingModal({
             label="Patient Phone"
             placeholder="(555) 123-4567"
             type="tel"
+            required
             value={form.patient_phone}
             onChange={(e) => update("patient_phone", e.target.value)}
           />
@@ -843,14 +844,12 @@ function BookingModal({
                 {form.patient_name}
               </span>
             </div>
-            {form.patient_phone && (
-              <div className="flex justify-between px-4 py-3">
-                <span className="text-sm text-gray-500">Phone</span>
-                <span className="text-sm font-medium text-gray-900">
-                  {form.patient_phone}
-                </span>
-              </div>
-            )}
+            <div className="flex justify-between px-4 py-3">
+              <span className="text-sm text-gray-500">Phone</span>
+              <span className="text-sm font-medium text-gray-900">
+                {form.patient_phone}
+              </span>
+            </div>
             <div className="flex justify-between px-4 py-3">
               <span className="text-sm text-gray-500">Pickup</span>
               <span className="text-sm font-medium text-gray-900 text-right max-w-[60%]">
