@@ -609,19 +609,6 @@ function BookingModal({
             </div>
           </div>
 
-          {/* Return pickup time — round trip only */}
-          {form.ride_type === "round_trip" && (
-            <Input
-              label="Return Pickup Time"
-              type="datetime-local"
-              required
-              value={form.return_pickup_time}
-              min={form.scheduled_pickup_time || new Date().toISOString().slice(0, 16)}
-              max={(() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 16); })()}
-              onChange={(e) => update("return_pickup_time", e.target.value)}
-            />
-          )}
-
           {/* ASAP / Scheduled toggle */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -732,6 +719,19 @@ function BookingModal({
                 onChange={(e) => update("appointment_time", e.target.value)}
               />
             </div>
+          )}
+
+          {/* Return pickup time — round trip only */}
+          {form.ride_type === "round_trip" && (
+            <Input
+              label="Return Pickup Time"
+              type="datetime-local"
+              required
+              value={form.return_pickup_time}
+              min={form.scheduled_pickup_time || new Date().toISOString().slice(0, 16)}
+              max={(() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 16); })()}
+              onChange={(e) => update("return_pickup_time", e.target.value)}
+            />
           )}
 
           {/* Shared Ride Preference */}
