@@ -21,6 +21,8 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { Modal } from "@/components/ui/Modal";
+import { useToast } from "@/components/ui/Toast";
 import { formatCurrency, RIDE_STATUS_CONFIG, formatAddress } from "@/lib/utils";
 import type { Ride, Driver, Organization, RideStatus } from "@/types/database";
 
@@ -85,6 +87,10 @@ export default function AdminDashboardPage() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [facilities, setFacilities] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
+  const [assignRide, setAssignRide] = useState<Ride | null>(null);
+  const [assignDriverId, setAssignDriverId] = useState("");
+  const [assigning, setAssigning] = useState(false);
+  const { toast } = useToast();
 
   // Filters
   const [search, setSearch] = useState("");
@@ -190,6 +196,36 @@ export default function AdminDashboardPage() {
       label: d.user?.full_name ?? "Unknown",
     })),
   ];
+
+  const assignableDriverOptions = [
+    { value: "", label: "Select a driver..." },
+    ...drivers
+      .filter((d) => d.is_active)
+      .map((d) => ({ value: d.id, label: d.user?.full_name ?? "Unknown" })),
+  ];
+
+  async function handleAssign() {
+    if (!assignRide || !assignDriverId) return;
+    setAssigning(true);
+    try {
+      const res = await fetch("/api/rides/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ride_id: assignRide.id, driver_id: assignDriverId }),
+      });
+      if (!res.ok) {
+        const json = await res.json();
+        toast(json.error ?? "Failed to assign driver", "error");
+      } else {
+        toast("Driver assigned successfully", "success");
+        setAssignRide(null);
+        setAssignDriverId("");
+        fetchData();
+      }
+    } finally {
+      setAssigning(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -355,16 +391,31 @@ export default function AdminDashboardPage() {
                       {ride.organization?.name ?? "—"}
                     </td>
                     <td className="py-3">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          router.push(`/rides/${ride.id}`);
-                        }}
-                      >
-                        View
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        {ride.status === "requested" && (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAssignRide(ride);
+                              setAssignDriverId("");
+                            }}
+                          >
+                            Assign
+                          </Button>
+                        )}
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            router.push(`/rides/${ride.id}`);
+                          }}
+                        >
+                          View
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -415,6 +466,41 @@ export default function AdminDashboardPage() {
           </div>
         )}
       </Card>
+
+      {/* Assign Driver Modal */}
+      <Modal
+        isOpen={!!assignRide}
+        onClose={() => { setAssignRide(null); setAssignDriverId(""); }}
+        title="Assign Driver"
+      >
+        {assignRide && (
+          <div className="space-y-4">
+            <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-700 space-y-1">
+              <p><span className="font-medium">Patient:</span> {assignRide.patient_name}</p>
+              <p><span className="font-medium">Pickup:</span> {formatAddress(assignRide.pickup_address)}</p>
+              <p><span className="font-medium">Time:</span> {new Date(assignRide.scheduled_pickup_time).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>
+            </div>
+            <Select
+              options={assignableDriverOptions}
+              value={assignDriverId}
+              onChange={(e) => setAssignDriverId(e.target.value)}
+              label="Driver"
+            />
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="secondary" onClick={() => { setAssignRide(null); setAssignDriverId(""); }}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!assignDriverId || assigning}
+                onClick={handleAssign}
+              >
+                {assigning ? "Assigning…" : "Confirm Assignment"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
