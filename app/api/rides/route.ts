@@ -276,7 +276,7 @@ export async function POST(request: NextRequest) {
 
         const { data: candidates } = await supabase
           .from("rides")
-          .select("id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, estimated_duration_minutes, scheduled_pickup_time, appointment_time, passenger_count")
+          .select("id, driver_id, status, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, estimated_duration_minutes, scheduled_pickup_time, appointment_time, passenger_count")
           .eq("organization_id", body.organization_id)
           .eq("ride_direction", direction)
           .eq("vehicle_type_needed", body.vehicle_type_needed)
@@ -318,10 +318,20 @@ export async function POST(request: NextRequest) {
 
           if (result.viable) {
             const groupId = crypto.randomUUID();
+            // If the candidate already has a driver, assign that driver to the new ride too
+            const sharedUpdate: Record<string, unknown> = { is_shared: true, shared_group_id: groupId };
+            if (cand.driver_id) {
+              sharedUpdate.driver_id = cand.driver_id;
+              sharedUpdate.status = "assigned";
+            }
             await supabase
               .from("rides")
               .update({ is_shared: true, shared_group_id: groupId })
-              .in("id", [ride.id, cand.id]);
+              .eq("id", cand.id);
+            await supabase
+              .from("rides")
+              .update(sharedUpdate)
+              .eq("id", ride.id);
             break; // only match one candidate per ride
           }
         }
