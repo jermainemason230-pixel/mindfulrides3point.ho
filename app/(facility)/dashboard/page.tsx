@@ -1124,7 +1124,7 @@ export default function FacilityDashboardPage() {
   const { profile, loading: authLoading } = useAuth();
   const isAdminUser = profile?.role === "admin";
   const organizationId = profile?.organization_id ?? "";
-  const { rides: todayRides, loading: ridesLoading } = useTodayRides(
+  const { rides: todayRides, loading: ridesLoading, refetch: refetchToday } = useTodayRides(
     isAdminUser ? undefined : (organizationId || undefined)
   );
   const { toast } = useToast();
@@ -1271,7 +1271,7 @@ export default function FacilityDashboardPage() {
           organizationId={isAdminUser ? "" : organizationId}
           bookedBy={profile.id}
           isAdmin={isAdminUser}
-          onSuccess={fetchUpcoming}
+          onSuccess={() => { fetchUpcoming(); refetchToday(); }}
         />
       )}
 
