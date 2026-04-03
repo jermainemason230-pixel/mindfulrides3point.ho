@@ -12,12 +12,14 @@ export async function geocodeAddress(address: string): Promise<GeocodingResult |
 
   try {
     const response = await fetch(
-      `${MAPBOX_BASE_URL}/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?access_token=${token}&limit=1`
+      `${MAPBOX_BASE_URL}/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?access_token=${token}&limit=1&types=address,poi`
     );
     const data = await response.json();
 
     if (data.features && data.features.length > 0) {
       const feature = data.features[0];
+      // Require a meaningful match — low relevance means Mapbox is guessing
+      if ((feature.relevance ?? 0) < 0.5) return null;
       return {
         address: feature.place_name,
         lat: feature.center[1],
