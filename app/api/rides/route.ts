@@ -173,20 +173,47 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const direction: "to_appointment" | "from_appointment" | "other" =
+      body.ride_direction ?? "other";
+    const allowShared: boolean = body.allow_shared_ride ?? true;
+
     const { data: activeRides } = await supabase
       .from("rides")
-      .select("driver_id, scheduled_pickup_time, estimated_duration_minutes")
+      .select("driver_id, scheduled_pickup_time, estimated_duration_minutes, allow_shared_ride, passenger_count")
       .not("status", "in", "(cancelled,no_show,completed)")
       .not("driver_id", "is", null)
       .lt("scheduled_pickup_time", rideEndTime.toISOString())
       .in("driver_id", scheduledDriverIds);
+
+    // Build a map of driver -> total committed passengers (for shared-ride capacity checks)
+    const driverPaxMap = new Map<string, number>();
+    for (const r of (activeRides ?? []) as any[]) {
+      const rStart = new Date(r.scheduled_pickup_time).getTime();
+      const rEnd   = rStart + (r.estimated_duration_minutes ?? 60) * 60 * 1000;
+      if (rEnd <= pickupTime.getTime()) continue;
+      driverPaxMap.set(r.driver_id, (driverPaxMap.get(r.driver_id) ?? 0) + (r.passenger_count ?? 1));
+    }
+
+    // Driver capacity lookup
+    const driverCapMap = new Map<string, number>();
+    for (const s of (schedules ?? []) as any[]) {
+      if (s.drivers?.max_passengers != null) driverCapMap.set(s.driver_id, s.drivers.max_passengers);
+    }
 
     const busyDriverIds = new Set<string>(
       (activeRides ?? [])
         .filter((r: any) => {
           const rStart = new Date(r.scheduled_pickup_time).getTime();
           const rEnd   = rStart + (r.estimated_duration_minutes ?? 60) * 60 * 1000;
-          return rEnd > pickupTime.getTime();
+          if (rEnd <= pickupTime.getTime()) return false;
+          // If both the existing ride and the new request allow sharing, check capacity
+          if (allowShared && r.allow_shared_ride) {
+            const committed = driverPaxMap.get(r.driver_id) ?? 0;
+            const capacity  = driverCapMap.get(r.driver_id) ?? 99;
+            // Not busy if combined passengers fit in the vehicle
+            return committed + passengerCount > capacity;
+          }
+          return true;
         })
         .map((r: any) => r.driver_id as string)
     );
@@ -199,10 +226,6 @@ export async function POST(request: NextRequest) {
         { status: 409 }
       );
     }
-
-    const direction: "to_appointment" | "from_appointment" | "other" =
-      body.ride_direction ?? "other";
-    const allowShared: boolean = body.allow_shared_ride ?? true;
 
     const rideData = {
       organization_id: body.organization_id,

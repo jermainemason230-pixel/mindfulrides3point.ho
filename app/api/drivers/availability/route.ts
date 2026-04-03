@@ -69,14 +69,19 @@ export async function GET(request: NextRequest) {
     const { data: activeRides } = allDriverIds.length > 0
       ? await db
           .from("rides")
-          .select("driver_id, scheduled_pickup_time, estimated_duration_minutes")
+          .select("driver_id, scheduled_pickup_time, estimated_duration_minutes, allow_shared_ride, passenger_count")
           .not("status", "in", "(cancelled,no_show,completed)")
           .not("driver_id", "is", null)
           .in("driver_id", allDriverIds)
       : { data: [] };
 
-    function isDriverFree(driverId: string, slotStart: Date, durationMins: number): boolean {
-      // Use totalBlockedMinutes for both the new ride and existing rides
+    // Driver capacity lookup from schedules
+    const driverCapMap = new Map<string, number>();
+    for (const s of (activeSchedules ?? []) as any[]) {
+      if (s.drivers?.max_passengers != null) driverCapMap.set(s.driver_id, s.drivers.max_passengers);
+    }
+
+    function isDriverFree(driverId: string, slotStart: Date, durationMins: number, newPax = 1, newAllowShared = true): boolean {
       const blocked = totalBlockedMinutes(durationMins);
       const slotEnd = new Date(slotStart.getTime() + blocked * 60 * 1000);
       return !(activeRides ?? []).some((r: any) => {
@@ -84,7 +89,16 @@ export async function GET(request: NextRequest) {
         const rStart   = new Date(r.scheduled_pickup_time).getTime();
         const rBlocked = totalBlockedMinutes(r.estimated_duration_minutes ?? 60);
         const rEnd     = rStart + rBlocked * 60 * 1000;
-        return rStart < slotEnd.getTime() && rEnd > slotStart.getTime();
+        if (!(rStart < slotEnd.getTime() && rEnd > slotStart.getTime())) return false;
+        // Overlapping — but if both allow sharing, check capacity instead of blocking outright
+        if (newAllowShared && r.allow_shared_ride) {
+          const committed = (activeRides ?? [])
+            .filter((x: any) => x.driver_id === driverId && x.allow_shared_ride)
+            .reduce((sum: number, x: any) => sum + (x.passenger_count ?? 1), 0);
+          const capacity = driverCapMap.get(driverId) ?? 99;
+          return committed + newPax > capacity;
+        }
+        return true;
       });
     }
 
@@ -95,7 +109,7 @@ export async function GET(request: NextRequest) {
         s.scheduled_date === date && s.start_time <= time && s.end_time > time
       );
       const scheduledIds = scheduled.map((s: any) => s.driver_id as string);
-      const freeIds = scheduledIds.filter((id) => isDriverFree(id, slotStart, durationMinutes));
+      const freeIds = scheduledIds.filter((id) => isDriverFree(id, slotStart, durationMinutes, passengerCount, true));
       const busyCount = scheduledIds.length - freeIds.length;
       return {
         available: freeIds.length > 0,
@@ -139,7 +153,7 @@ export async function GET(request: NextRequest) {
       const freeDriverIds = activeSchedules
         .filter((s: any) => s.scheduled_date === date && s.start_time <= time && s.end_time > time)
         .map((s: any) => s.driver_id as string)
-        .filter((id: string) => isDriverFree(id, dt, durationMinutes));
+        .filter((id: string) => isDriverFree(id, dt, durationMinutes, passengerCount, true));
 
       if (freeDriverIds.length > 0) {
         // Fetch GPS locations updated within the last 30 minutes
