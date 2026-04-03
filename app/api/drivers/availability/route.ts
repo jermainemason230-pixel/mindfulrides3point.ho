@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient, createServiceRoleClient } from "@/lib/supabase/server";
-import { totalBlockedMinutes } from "@/lib/ride-buffers";
+import { totalBlockedMinutes, BUFFERS } from "@/lib/ride-buffers";
+import { getRouteDistance } from "@/lib/mapbox/geocoding";
 
 function pad(n: number) { return String(n).padStart(2, "0"); }
 function toDateStr(d: Date) {
@@ -125,7 +126,51 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ ...result, alternatives });
+    // If pickup coords are provided and drivers are available, calculate real ETAs from driver GPS
+    const pickupLat = parseFloat(searchParams.get("pickup_lat") ?? "");
+    const pickupLng = parseFloat(searchParams.get("pickup_lng") ?? "");
+    let etaMinutes: number = BUFFERS.asapDispatchMinutes;
+    let etaSource: "gps" | "estimate" = "estimate";
+
+    if (result.available && !isNaN(pickupLat) && !isNaN(pickupLng)) {
+      // Get the IDs of free drivers at this slot
+      const date = localDate ?? toDateStr(dt);
+      const time = localTime ?? toTimeStr(dt);
+      const freeDriverIds = activeSchedules
+        .filter((s: any) => s.scheduled_date === date && s.start_time <= time && s.end_time > time)
+        .map((s: any) => s.driver_id as string)
+        .filter((id: string) => isDriverFree(id, dt, durationMinutes));
+
+      if (freeDriverIds.length > 0) {
+        // Fetch GPS locations updated within the last 30 minutes
+        const staleThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        const { data: locatedDrivers } = await db
+          .from("drivers")
+          .select("id, current_lat, current_lng")
+          .in("id", freeDriverIds)
+          .not("current_lat", "is", null)
+          .not("current_lng", "is", null)
+          .gte("last_location_update", staleThreshold);
+
+        if (locatedDrivers && locatedDrivers.length > 0) {
+          // Route each located driver to the pickup point, pick the fastest
+          const driveTimes = await Promise.all(
+            locatedDrivers.map((d: any) =>
+              getRouteDistance(d.current_lat, d.current_lng, pickupLat, pickupLng)
+                .then((r) => r?.durationMinutes ?? null)
+                .catch(() => null)
+            )
+          );
+          const validTimes = driveTimes.filter((t): t is number => t !== null);
+          if (validTimes.length > 0) {
+            etaMinutes = Math.round(Math.min(...validTimes));
+            etaSource = "gps";
+          }
+        }
+      }
+    }
+
+    return NextResponse.json({ ...result, alternatives, eta_minutes: etaMinutes, eta_source: etaSource });
   } catch (err) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

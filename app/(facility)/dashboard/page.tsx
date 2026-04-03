@@ -170,6 +170,7 @@ function BookingModal({
   const [costLoading, setCostLoading] = useState(false);
   const [asapEta, setAsapEta] = useState<{ time: string; isNext: boolean } | null>(null);
   const [asapEtaLoading, setAsapEtaLoading] = useState(false);
+  const [pickupCoords, setPickupCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [availability, setAvailability] = useState<{ available: boolean; driver_count: number; total_scheduled: number; conflict: boolean; conflict_count?: number; alternatives?: string[] } | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
 
@@ -188,15 +189,21 @@ function BookingModal({
       vehicle_type: form.vehicle_type_needed,
       passenger_count: String(form.passenger_count),
     });
+    if (pickupCoords) {
+      params.set("pickup_lat", String(pickupCoords.lat));
+      params.set("pickup_lng", String(pickupCoords.lng));
+    }
     fetch(`/api/drivers/availability?${params}`)
       .then((r) => r.json())
       .then((data) => {
         if (data.available) {
-          // Driver available now — pickup buffer applied
-          const eta = new Date(now.getTime() + BUFFERS.asapDispatchMinutes * 60 * 1000);
-          setAsapEta({ time: format(eta, "h:mm a"), isNext: false });
+          const etaMinutes = data.eta_minutes ?? BUFFERS.asapDispatchMinutes;
+          const eta = new Date(now.getTime() + etaMinutes * 60 * 1000);
+          const label = data.eta_source === "gps"
+            ? `${format(eta, "h:mm a")} (~${Math.round(etaMinutes)} min drive)`
+            : format(eta, "h:mm a");
+          setAsapEta({ time: label, isNext: false });
         } else if (data.alternatives && data.alternatives.length > 0) {
-          // No driver now — show next available slot
           setAsapEta({ time: format(new Date(data.alternatives[0]), "h:mm a 'on' MMM d"), isNext: true });
         } else {
           setAsapEta(null);
@@ -204,7 +211,7 @@ function BookingModal({
       })
       .catch(() => setAsapEta(null))
       .finally(() => setAsapEtaLoading(false));
-  }, [step, form.is_asap, form.vehicle_type_needed, form.passenger_count]);
+  }, [step, form.is_asap, form.vehicle_type_needed, form.passenger_count, pickupCoords]);
 
   // Check driver availability when reaching confirm step
   useEffect(() => {
@@ -287,6 +294,7 @@ function BookingModal({
       if (errors.pickup || errors.dropoff) {
         setAddressErrors(errors);
       } else {
+        if (pickup) setPickupCoords({ lat: pickup.lat, lng: pickup.lng });
         setStep(step + 1);
       }
     } catch {
