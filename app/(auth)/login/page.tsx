@@ -25,21 +25,16 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      console.log("[login] step 1: creating client");
       const supabase = createClient();
 
-      console.log("[login] step 2: signing in");
       const { error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
-        console.log("[login] auth error:", error.message);
         toast(error.message, "error");
         return;
       }
 
-      console.log("[login] step 3: fetching profile");
       const res = await fetch("/api/auth/me");
-      console.log("[login] step 4: got response", res.status);
       if (!res.ok) {
         toast("Signed in but could not load your profile. Please refresh.", "error");
         return;
@@ -54,8 +49,7 @@ export default function LoginPage() {
 
       window.location.href = redirectPath;
     } catch (err) {
-      console.error("[login] caught:", err);
-      toast(err instanceof Error ? err.message : `Error: ${String(err)}`, "error");
+      toast(err instanceof Error ? err.message : "An unexpected error occurred. Please try again.", "error");
     } finally {
       setLoading(false);
     }
